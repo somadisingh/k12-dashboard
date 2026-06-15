@@ -1,0 +1,379 @@
+// School Administration & Staff Performance Evaluation Platform
+// Database design — Prisma schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────
+// AUTH & USERS
+// ─────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(TEACHER)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  staff Staff?
+
+  @@map("users")
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN // Principal, can do everything
+  OBSERVER // Can create/submit observations
+  TEACHER // Can view their own reviews/goals
+}
+
+// ─────────────────────────────────────────
+// ORGANIZATIONAL STRUCTURE
+// ─────────────────────────────────────────
+
+model School {
+  id        String   @id @default(uuid())
+  name      String
+  address   String?
+  phone     String?
+  logoUrl   String?
+  createdAt DateTime @default(now())
+
+  departments Department[]
+  staff       Staff[]
+
+  @@map("schools")
+}
+
+model Department {
+  id       String @id @default(uuid())
+  name     String
+  schoolId String
+  school   School @relation(fields: [schoolId], references: [id])
+
+  staff Staff[]
+
+  @@map("departments")
+}
+
+// ─────────────────────────────────────────
+// STAFF PROFILES
+// ─────────────────────────────────────────
+
+model Staff {
+  id           String      @id @default(uuid())
+  userId       String      @unique
+  user         User        @relation(fields: [userId], references: [id])
+  schoolId     String
+  school       School      @relation(fields: [schoolId], references: [id])
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  firstName  String
+  lastName   String
+  position   String // "5th Grade Teacher", "Biology Teacher", "Principal"
+  gradeLevel String? // "Elementary", "Middle School", "High School"
+  subjects   String[] // ["Math", "Algebra II"] — PostgreSQL array
+  hireDate   DateTime?
+  avatarUrl  String?
+  phone      String?
+  bio        String?
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  // Observation relations
+  observationsAsTeacher  Observation[] @relation("TeacherObservations")
+  observationsAsObserver Observation[] @relation("ObserverObservations")
+
+  // Review relations
+  reviewsAsReviewee PerformanceReview[] @relation("RevieweeReviews")
+  reviewsAsReviewer PerformanceReview[] @relation("ReviewerReviews")
+
+  // Other relations
+  goals GoalStaff[]
+  notes Note[]
+
+  @@map("staff")
+}
+
+// ─────────────────────────────────────────
+// CLASSROOM OBSERVATIONS
+// Uses the Danielson Framework (4 domains, 4-point scale)
+// ─────────────────────────────────────────
+
+model Observation {
+  id         String @id @default(uuid())
+  observerId String
+  observer   Staff  @relation("ObserverObservations", fields: [observerId], references: [id])
+  teacherId  String
+  teacher    Staff  @relation("TeacherObservations", fields: [teacherId], references: [id])
+
+  // Scheduling
+  scheduledDate DateTime
+  observedDate  DateTime?
+  duration      Int? // minutes
+
+  // Class context
+  subject      String
+  gradeLevel   String
+  classPeriod  String?
+  studentCount Int?
+  unit         String? // Unit/chapter being taught
+
+  // Workflow status
+  status ObservationStatus @default(SCHEDULED)
+
+  // Narrative content (all freeform)
+  preObsNotes    String? // Pre-observation conference notes
+  narrativeNotes String? // Real-time observation notes
+  strengths      String? // What went well
+  areasForGrowth String? // Growth opportunities
+  actionItems    String? // Specific next steps
+  postObsNotes   String? // Post-conference notes
+
+  // AI
+  aiSummary     String?
+  aiGeneratedAt DateTime?
+
+  rubricScores ObservationRubricScore[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("observations")
+}
+
+enum ObservationStatus {
+  SCHEDULED // Observation planned, not yet happened
+  IN_PROGRESS // Observer is currently in the classroom
+  DRAFT // Observer taking notes, not submitted
+  SUBMITTED // Submitted for teacher review
+  TEACHER_ACKNOWLEDGED // Teacher has read and acknowledged
+  COMPLETED // Post-conference done, cycle complete
+}
+
+// Danielson Framework — 4 domains, 4-point scale
+model ObservationRubricScore {
+  id            String      @id @default(uuid())
+  observationId String
+  observation   Observation @relation(fields: [observationId], references: [id], onDelete: Cascade)
+
+  category RubricCategory
+  score    Int // 1=Unsatisfactory, 2=Basic, 3=Proficient, 4=Distinguished
+  notes    String?
+
+  @@unique([observationId, category])
+  @@map("observation_rubric_scores")
+}
+
+enum RubricCategory {
+  PLANNING_AND_PREPARATION // Domain 1: Lesson goals, content knowledge, differentiation
+  CLASSROOM_ENVIRONMENT // Domain 2: Respectful culture, procedures, student behavior
+  INSTRUCTION // Domain 3: Communication, questioning, student engagement
+  PROFESSIONAL_RESPONSIBILITIES // Domain 4: Reflection, family communication, collegial growth
+}
+
+// ─────────────────────────────────────────
+// PERFORMANCE REVIEWS
+// ─────────────────────────────────────────
+
+model PerformanceReview {
+  id         String @id @default(uuid())
+  reviewerId String
+  reviewer   Staff  @relation("ReviewerReviews", fields: [reviewerId], references: [id])
+  revieweeId String
+  reviewee   Staff  @relation("RevieweeReviews", fields: [revieweeId], references: [id])
+
+  // Metadata
+  reviewPeriod String // e.g. "2024-2025 Annual", "Fall 2024"
+  reviewType   ReviewType   @default(ANNUAL)
+  status       ReviewStatus @default(DRAFT)
+
+  // Overall computed rating (weighted avg of criteria)
+  overallRating Float?
+
+  // Narrative sections
+  summaryComments    String?
+  strengthsNarrative String?
+  growthNarrative    String?
+  adminPrivateNotes  String? // Not shared with teacher
+
+  // Teacher self-assessment
+  selfAssessmentText String?
+  selfSubmittedAt    DateTime?
+
+  // Meeting info
+  meetingDate DateTime?
+  completedAt DateTime?
+
+  // AI
+  aiSummary         String?
+  aiRecommendations String? // Stored as JSON string: array of recommendation objects
+  aiGeneratedAt     DateTime?
+
+  criteriaScores ReviewCriteriaScore[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("performance_reviews")
+}
+
+enum ReviewType {
+  ANNUAL
+  MID_YEAR
+  PROBATIONARY
+  INFORMAL
+}
+
+enum ReviewStatus {
+  DRAFT // Admin drafting
+  SELF_ASSESSMENT_PENDING // Sent to teacher for self-assessment
+  UNDER_REVIEW // Admin reviewing with self-assessment
+  FEEDBACK_SHARED // Review shared with teacher
+  MEETING_SCHEDULED // Review meeting set
+  COMPLETED // Fully finalized
+}
+
+model ReviewCriteriaScore {
+  id       String            @id @default(uuid())
+  reviewId String
+  review   PerformanceReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  criterion ReviewCriterion
+  score     Int // 1=Unsatisfactory, 2=Developing, 3=Proficient, 4=Distinguished, 5=Exemplary
+  comments  String?
+
+  @@unique([reviewId, criterion])
+  @@map("review_criteria_scores")
+}
+
+enum ReviewCriterion {
+  TEACHING_EFFECTIVENESS // Lesson delivery, pacing, clarity
+  STUDENT_ENGAGEMENT_AND_OUTCOMES // Active participation, measurable results
+  CLASSROOM_MANAGEMENT // Routines, behavior, environment
+  PROFESSIONALISM_AND_COLLABORATION // Punctuality, team meetings, dress
+  PROFESSIONAL_GROWTH // PD hours, applying new strategies
+  FAMILY_AND_COMMUNITY_ENGAGEMENT // Parent communication, outreach
+}
+
+// ─────────────────────────────────────────
+// GOAL TRACKING
+// ─────────────────────────────────────────
+
+// Junction: goals can be assigned to one staff member by another
+model GoalStaff {
+  id          String @id @default(uuid())
+  staffId     String
+  staff       Staff  @relation(fields: [staffId], references: [id])
+  createdById String // Who set the goal (admin ID)
+
+  goal   Goal   @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  goalId String
+
+  @@map("goal_staff")
+}
+
+model Goal {
+  id          String       @id @default(uuid())
+  title       String
+  description String?
+  category    GoalCategory
+  targetDate  DateTime
+  status      GoalStatus   @default(ACTIVE)
+  completedAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  assignments GoalStaff[]
+  milestones  GoalMilestone[]
+  updates     GoalProgressUpdate[]
+
+  @@map("goals")
+}
+
+enum GoalCategory {
+  INSTRUCTIONAL_PRACTICE // Improving specific teaching strategies
+  PROFESSIONAL_DEVELOPMENT // Certifications, courses, workshops
+  STUDENT_ACHIEVEMENT // Raise specific student metric
+  COLLABORATION // Team/PLC participation
+  LEADERSHIP // Department or committee leadership
+  PERSONAL_GROWTH // Communication, time management, etc.
+}
+
+enum GoalStatus {
+  ACTIVE // On track
+  AT_RISK // Target date approaching, incomplete
+  COMPLETED // All milestones done
+  ARCHIVED // No longer relevant
+}
+
+model GoalMilestone {
+  id          String          @id @default(uuid())
+  goalId      String
+  goal        Goal            @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  dueDate     DateTime
+  status      MilestoneStatus @default(PENDING)
+  completedAt DateTime?
+  createdAt   DateTime        @default(now())
+
+  @@map("goal_milestones")
+}
+
+enum MilestoneStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  MISSED
+}
+
+model GoalProgressUpdate {
+  id        String   @id @default(uuid())
+  goalId    String
+  goal      Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  authorId  String // Staff ID of who wrote the update
+  content   String
+  createdAt DateTime @default(now())
+
+  @@map("goal_progress_updates")
+}
+
+// ─────────────────────────────────────────
+// NOTES & DOCUMENTATION
+// ─────────────────────────────────────────
+
+model Note {
+  id          String      @id @default(uuid())
+  authorId    String
+  author      Staff       @relation(fields: [authorId], references: [id])
+  title       String
+  content     String // Rich text or markdown
+  tags        String[] // Flexible tagging system
+  subjectType NoteSubject @default(GENERAL)
+  subjectId   String? // ID of related record (staffId, observationId, etc.)
+  isPinned    Boolean     @default(false)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@map("notes")
+}
+
+enum NoteSubject {
+  GENERAL
+  STAFF
+  OBSERVATION
+  REVIEW
+  GOAL
+  MEETING
+}
