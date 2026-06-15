@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { SparklesIcon, ArrowPathIcon } from '@heroicons/react/24/solid';
 import * as aiApi from '../../api/ai.js';
 import { formatDateTime } from '../../utils/formatters.js';
+import { getAiErrorMessage } from '../../utils/aiErrors.js';
 
 export default function AISummaryPanel({ observation, onUpdated }) {
   const [loading, setLoading] = useState(false);
@@ -14,7 +15,7 @@ export default function AISummaryPanel({ observation, onUpdated }) {
       await aiApi.generateObservationSummary(observation.id);
       await onUpdated();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to generate summary');
+      setError(getAiErrorMessage(err, 'Failed to generate summary'));
     } finally {
       setLoading(false);
     }

@@ -13,9 +13,14 @@ export function errorHandler(err, req, res, next) {
   }
 
   const status = err.status || 500;
-  res.status(status).json({
-    error: err.publicMessage || (status === 500 ? 'Internal server error' : err.message),
-  });
+  const message =
+    err.publicMessage ||
+    (err.message?.includes('GoogleGenerativeAI')
+      ? 'The AI service is temporarily unavailable. Please try again in a moment.'
+      : status === 500
+      ? 'Internal server error'
+      : err.message);
+  res.status(status).json({ error: message });
 }
 
 // Wraps async controllers so thrown errors reach the error handler

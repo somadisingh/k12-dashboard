@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { SparklesIcon, ArrowPathIcon } from '@heroicons/react/24/solid';
 import * as aiApi from '../../api/ai.js';
 import { formatDateTime } from '../../utils/formatters.js';
+import { getAiErrorMessage } from '../../utils/aiErrors.js';
 
 function parseRecs(review) {
   if (!review.aiRecommendations) return null;
@@ -25,7 +26,7 @@ export default function AIRecommendationsPanel({ review, onUpdated }) {
       await aiApi.generateReviewRecommendations(review.id);
       await onUpdated();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to generate recommendations');
+      setError(getAiErrorMessage(err, 'Failed to generate recommendations'));
     } finally {
       setLoading(false);
     }

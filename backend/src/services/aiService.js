@@ -1,11 +1,16 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// ─────────────────────────────────────────
-// Gemini client (used in place of OpenAI from the original plan)
-// ─────────────────────────────────────────
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+// Primary model from env, then fallbacks when Google returns 503/429 (high demand)
+const MODEL_CHAIN = [
+  process.env.GEMINI_MODEL,
+  'gemini-2.0-flash-lite',
+  'gemini-flash-latest',
+  'gemini-2.0-flash',
+].filter(Boolean);
 
-function getModel(extraConfig = {}) {
+const UNIQUE_MODELS = [...new Set(MODEL_CHAIN)];
+
+function getGenAI() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     const err = new Error('GEMINI_API_KEY is not configured');
@@ -14,8 +19,55 @@ function getModel(extraConfig = {}) {
       'AI is not configured on the server. Add GEMINI_API_KEY to enable AI generation.';
     throw err;
   }
-  const genAI = new GoogleGenerativeAI(apiKey);
-  return genAI.getGenerativeModel({ model: MODEL, ...extraConfig });
+  return new GoogleGenerativeAI(apiKey);
+}
+
+function isRetryable(err) {
+  const msg = (err?.message || '').toLowerCase();
+  return (
+    msg.includes('503') ||
+    msg.includes('429') ||
+    msg.includes('high demand') ||
+    msg.includes('unavailable') ||
+    msg.includes('overloaded') ||
+    msg.includes('resource exhausted')
+  );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function generateWithFallback({ systemInstruction, generationConfig, prompt }) {
+  const genAI = getGenAI();
+  let lastError;
+
+  for (const modelName of UNIQUE_MODELS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          systemInstruction,
+          ...(generationConfig ? { generationConfig } : {}),
+        });
+        const result = await model.generateContent(prompt);
+        return result.response.text().trim();
+      } catch (err) {
+        lastError = err;
+        if (isRetryable(err)) {
+          await sleep(800 * (attempt + 1));
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
+  const err = new Error(lastError?.message || 'AI generation failed');
+  err.status = 503;
+  err.publicMessage =
+    'The AI service is temporarily busy. Please wait a moment and try again.';
+  throw err;
 }
 
 // ─────────────────────────────────────────
@@ -136,27 +188,29 @@ Generate 4 recommendations targeting the lowest-scoring areas.
 Be specific, not generic.`;
 }
 
+function parseRecommendations(text) {
+  const parsed = JSON.parse(text);
+  return Array.isArray(parsed) ? parsed : parsed.recommendations || [];
+}
+
 // ─────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────
 
 export async function generateObservationSummary(observationData) {
-  const model = getModel({ systemInstruction: OBSERVATION_SYSTEM_PROMPT });
   const prompt = buildObservationPrompt(observationData);
-  const result = await model.generateContent(prompt);
-  return result.response.text().trim();
+  return generateWithFallback({
+    systemInstruction: OBSERVATION_SYSTEM_PROMPT,
+    prompt,
+  });
 }
 
 export async function generateReviewRecommendations(reviewData) {
-  const model = getModel({
+  const prompt = buildReviewPrompt(reviewData);
+  const text = await generateWithFallback({
     systemInstruction: REVIEW_SYSTEM_PROMPT,
     generationConfig: { responseMimeType: 'application/json' },
+    prompt,
   });
-  const prompt = buildReviewPrompt(reviewData);
-  const result = await model.generateContent(prompt);
-  const text = result.response.text();
-  const parsed = JSON.parse(text);
-  // Normalize to a flat array of recommendations
-  const recommendations = Array.isArray(parsed) ? parsed : parsed.recommendations || [];
-  return recommendations;
+  return parseRecommendations(text);
 }
