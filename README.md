@@ -3,6 +3,7 @@
 A professional HR / performance-management web application purpose-built for K-12 schools. Principals and department heads use it to run classroom observations, conduct formal performance reviews, track SMART goals, keep documentation, and view school-wide analytics — with AI-generated observation summaries and professional-development recommendations.
 
 > Built as a full-stack prototype: **React + Vite + Tailwind** frontend, **Node.js + Express + Prisma + PostgreSQL** backend, and **Google Gemini** for the AI features.
+> Deployed [App](https://k12-dashboard-three.vercel.app)
 
 ---
 
